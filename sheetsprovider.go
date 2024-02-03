@@ -24,7 +24,7 @@ func (s *sheetsProvider) Query() ([][]interface{}, error) {
 	}
 
 	log.Println("querying sheet")
-	readRange := "A:B"
+	readRange := "L:M"
 	if s.sheetName != "" {
 		readRange = s.sheetName + "!" + readRange
 	}

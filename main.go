@@ -132,6 +132,13 @@ func (s *server) redirect(w http.ResponseWriter, req *http.Request) {
 	}
 
 	log.Printf("redirecting=%q to=%q", req.URL, redirTo.String())
+	// Find the row number for the redirected URL
+	rowNumber, _ := s.findRedirectRow(req.URL)
+
+	// Increment the counter in column N
+	if err := s.db.sheet.UpdateCounter(rowNumber); err != nil {
+		log.Printf("error updating counter: %v", err)
+	}
 	http.Redirect(w, req, redirTo.String(), http.StatusFound) // no permanent redirects
 }
 
@@ -205,4 +212,57 @@ func urlMap(in [][]interface{}) URLMap {
 func writeError(w http.ResponseWriter, code int, msg string, vals ...interface{}) {
 	w.WriteHeader(code)
 	fmt.Fprintf(w, msg, vals...)
+}
+
+func (s *sheetsProvider) UpdateCounter(rowNumber int) error {
+	srv, err := sheets.NewService(context.TODO())
+	if err != nil {
+		return fmt.Errorf("unable to retrieve Sheets client: %v", err)
+	}
+
+	updateRange := fmt.Sprintf("%s!N%d", s.sheetName, rowNumber)
+
+	values := &sheets.ValueRange{
+		Values: [][]interface{}{{1}}, // Increment the counter by 1
+	}
+
+	_, err = srv.Spreadsheets.Values.Update(s.googleSheetsID, updateRange, values).ValueInputOption("RAW").Do()
+	if err != nil {
+		return fmt.Errorf("unable to update counter in sheet: %v", err)
+	}
+
+	return nil
+}
+
+func (s *server) findRedirectRow(reqURL *url.URL) (int, error) {
+	path := strings.TrimPrefix(reqURL.Path, "/")
+
+	segments := strings.Split(path, "/")
+	var discard []string
+	for len(segments) > 0 {
+		query := strings.Join(segments, "/")
+		v, err := s.db.Get(query)
+		if err != nil {
+			return 0, err
+		}
+		if v != nil {
+			return s.db.getRowNumber(query), nil
+		}
+		discard = append([]string{segments[len(segments)-1]}, discard...)
+		segments = segments[:len(segments)-1]
+	}
+	return 0, nil
+}
+
+func (c *cachedURLMap) getRowNumber(query string) int {
+	c.RLock()
+	defer c.RUnlock()
+
+	for rowNumber, key := range c.v {
+		if key == query {
+			return rowNumber + 1 // Adding 1 because Google Sheets are 1-indexed
+		}
+	}
+
+	return 0
 }
